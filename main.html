@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>TheCrims ↔ RealTime Planner</title>
+
+    <!-- Luxon for robust timezone handling -->
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
+
+    <style>
+        :root{
+          --bg:#f6f8fb; --card:#fff; --accent:#0b63d6; --muted:#657786;
+          font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+        }
+        body{margin:0;background:var(--bg);color:#111;display:flex;align-items:flex-start;justify-content:center;padding:28px;}
+        .wrap{max-width:980px;width:100%;}
+        header{display:flex;align-items:center;gap:16px;margin-bottom:18px;}
+        header h1{margin:0;font-size:18px;}
+        .grid{display:grid;grid-template-columns:1fr 420px;gap:18px;}
+        .card{background:var(--card);padding:14px;border-radius:10px;box-shadow:0 6px 18px rgba(12,30,60,0.06);}
+        label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+        input[type="text"], input[type="number"], input[type="datetime-local"], select{
+          width:100%;padding:10px;border-radius:8px;border:1px solid #e6e9ee;background:#fff;font-size:14px;
+        }
+        .row{display:flex;gap:8px}
+        .row > *{flex:1}
+        button{background:var(--accent);color:#fff;padding:10px;border-radius:8px;border:0;cursor:pointer;font-weight:600}
+        small{color:var(--muted)}
+        .result{background:#f3f8ff;padding:10px;border-radius:8px;margin-top:8px;color:#0b3d91;font-weight:600}
+        .list{max-height:360px;overflow:auto;margin-top:8px;padding:6px;border-radius:8px;border:1px dashed #e6e9ee;background:#fff}
+        .list .line{padding:6px 8px;border-bottom:1px solid #f1f4f8;font-size:13px}
+        .muted{color:var(--muted);font-size:13px}
+        .controls{display:flex;gap:8px;margin-top:10px}
+        .small-btn{background:#eef4ff;color:var(--accent);padding:8px;border-radius:8px;border:0;cursor:pointer}
+        .topline{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+        @media (max-width:980px){ .grid{grid-template-columns:1fr; } }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <header>
+        <h1>TheCrims ↔ Real-time planner</h1>
+        <small class="muted">Accurate conversion using: 1 TC day = 6 IRL hours (1 TC minute = 15 IRL seconds)</small>
+    </header>
+
+    <div class="grid">
+        <!-- LEFT: main controls -->
+        <div class="card">
+            <div class="topline">
+                <strong>Round & reference</strong>
+                <small class="muted">Provide the round start (backend can inject this)</small>
+            </div>
+
+            <label>Round label (optional)</label>
+            <input id="roundLabel" type="text" placeholder="e.g. Round 222 — Oct 27 17:00 CET - Nov 9 17:00">
+
+            <div style="margin-top:8px" class="row">
+                <div>
+                    <label>Round start (localizable)</label>
+                    <input id="roundStartLocal" type="datetime-local" >
+                </div>
+                <div>
+                    <label>Round start timezone</label>
+                    <select id="roundTZ"></select>
+                </div>
+            </div>
+
+            <div style="margin-top:8px" class="row">
+                <div>
+                    <label>Round length (TC days)</label>
+                    <input id="roundLength" type="number" min="1" value="52">
+                </div>
+                <div>
+                    <label>TC days shown (calendar)</label>
+                    <input id="generateDays" type="number" min="1" value="52">
+                </div>
+            </div>
+
+            <div style="margin-top:12px" class="topline"><strong>Conversions</strong><small class="muted">Two-way</small></div>
+
+            <!-- TC -> IRL -->
+            <label>TC time (examples: "Day 8/53 10:35" or enter fields)</label>
+            <div class="row">
+                <input id="tcDay" type="number" placeholder="Day #" min="1" />
+                <input id="tcTime" type="text" placeholder="HH:MM (24h)" />
+            </div>
+
+            <div style="margin-top:8px" class="row">
+                <select id="outTZ"></select>
+                <button onclick="convertTCtoIRL()">Convert TC → IRL</button>
+            </div>
+
+            <div id="tcToIrlResult" class="result" style="display:none"></div>
+
+            <hr style="margin:12px 0;border:none;border-top:1px solid #f1f4f8">
+
+            <!-- IRL -> TC -->
+            <label>IRL datetime</label>
+            <div class="row">
+                <input id="irlDateTime" type="datetime-local" />
+                <select id="irlTZ"></select>
+            </div>
+
+            <div class="controls">
+                <button onclick="convertIRLtoTC()">Convert IRL → TC</button>
+                <button class="small-btn" onclick="fillNow()">Fill Now</button>
+                <button class="small-btn" onclick="fillRoundStart()">Use Round Start</button>
+            </div>
+
+            <div id="irlToTcResult" class="result" style="display:none"></div>
+
+            <hr style="margin:12px 0;border:none;border-top:1px solid #f1f4f8">
+
+            <div class="topline"><strong>Calendar</strong><small class="muted">Generate TC day → IRL mapping</small></div>
+            <div class="row">
+                <button onclick="generateCalendar()">Generate</button>
+                <button onclick="clearCalendar()" class="small-btn">Clear</button>
+            </div>
+            <div id="calendar" class="list" aria-live="polite"></div>
+        </div>
+
+        <!-- RIGHT: quick info / helpers -->
+        <div class="card">
+            <strong>Quick facts</strong>
+            <p class="muted" style="margin-top:8px">
+                Conversion logic:
+            </p>
+            <ul style="margin:6px 0 12px 18px;color:var(--muted)">
+                <li><code>elapsed_tc_hours = (day-1)*24 + HH + MM/60</code></li>
+                <li><code>elapsed_real_hours = elapsed_tc_hours * 0.25</code></li>
+                <li>Round start defines TC Day 1 at given IRL timestamp.</li>
+            </ul>
+
+            <strong>Usage tips</strong>
+            <ol class="muted" style="font-size:13px">
+                <li>Paste round start from thecrims.com into "Round start".</li>
+                <li>Use "Fill Now" to set IRL now and convert to TC quickly.</li>
+                <li>Generate calendar for the round (default 52 days) or request any length.</li>
+            </ol>
+
+            <hr style="margin:12px 0;border:none;border-top:1px solid #f1f4f8">
+            <div class="muted">Result examples</div>
+            <div style="margin-top:8px">
+                <div class="muted">TC → IRL:</div>
+                <div style="font-weight:600;margin-top:4px">Day 7 03:00 → 2025-10-30 09:00 CET (example)</div>
+
+                <div style="margin-top:12px" class="muted">IRL → TC:</div>
+                <div style="font-weight:600;margin-top:4px">2025-10-29 18:30 CET → Day 6 21:30 (example)</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const { DateTime, Duration, IANAZone } = luxon;
+
+    // populate timezone selects (modern browsers)
+    function populateTZ(select){
+      select.innerHTML = '';
+      let zones = [];
+      if (typeof Intl.supportedValuesOf === 'function') {
+        try { zones = Intl.supportedValuesOf('timeZone'); } catch(e){ zones = [] }
+      }
+      // fallback common zones if not available
+      if (!zones || zones.length === 0) {
+        zones = [
+          'UTC','Europe/London','Europe/Berlin','Europe/Paris','America/New_York','America/Chicago',
+          'America/Los_Angeles','Asia/Tokyo','Asia/Shanghai','Australia/Sydney'
+        ];
+      }
+      zones.forEach(z => {
+        const opt = document.createElement('option'); opt.value = z; opt.text = z; select.appendChild(opt);
+      });
+      try {
+        const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (zones.includes(local)) select.value = local;
+      } catch(e){}
+    }
+
+    // DOM refs
+    const roundStartLocal = document.getElementById('roundStartLocal');
+    const roundTZ = document.getElementById('roundTZ');
+    const outTZ = document.getElementById('outTZ');
+    const irlTZ = document.getElementById('irlTZ');
+
+    populateTZ(roundTZ);
+    populateTZ(outTZ);
+    populateTZ(irlTZ);
+
+    // reasonable defaults: use the round example the user provided
+    (function setDefaults(){
+      // Example: Round 222 Oct 27, 5:00 PM (CET). We put as default.
+      const exampleStart = DateTime.fromObject({year:2025,month:10,day:27,hour:17,minute:0}, {zone: 'Europe/Paris'});
+      // Make HTML datetime-local value in local timezone to match picker
+      const asLocal = exampleStart.setZone(DateTime.local().zoneName).toISO({suppressSeconds:true, includeOffset:false});
+      // datetime-local expects format yyyy-MM-ddTHH:mm
+      const iso = asLocal.slice(0,16);
+      roundStartLocal.value = iso;
+      roundTZ.value = 'Europe/Paris';
+    })();
+    document.getElementById('roundLength').value = 52;
+    document.getElementById('generateDays').value = 52;
+
+    // helper: read round start as UTC DateTime (accurate)
+    function getRoundStartUTC(){
+      const dtLocalStr = roundStartLocal.value;
+      if (!dtLocalStr) return null;
+      const tz = roundTZ.value || 'UTC';
+      // parse local-like and interpret in tz
+      const parts = dtLocalStr.split('T'); // yyyy-mm-ddTHH:MM
+      const [date, time] = parts;
+      const [y,mo,d] = date.split('-').map(Number);
+      const [hh,mm] = time.split(':').map(Number);
+      return DateTime.fromObject({year:y,month:mo,day:d,hour:hh,minute:mm}, {zone: tz}).toUTC();
+    }
+
+    // core conversion functions
+    const TC_HOURS_IN_DAY = 24;
+    const REAL_HOURS_PER_TC_HOUR = 0.25; // 6 real hours / 24 tc hours
+
+    function tcToUtcDateTime(tcDay, tcHour, tcMinute){
+      const roundStartUTC = getRoundStartUTC();
+      if(!roundStartUTC) throw 'Set round start first.';
+      // elapsed tc hours
+      const elapsed_tc_hours = (tcDay - 1) * TC_HOURS_IN_DAY + tcHour + (tcMinute/60);
+      const elapsed_real_hours = elapsed_tc_hours * REAL_HOURS_PER_TC_HOUR;
+      return roundStartUTC.plus({hours: elapsed_real_hours});
+    }
+
+    function irlDateTimeToTc(dt){ // dt is a Luxon DateTime (any zone)
+      const roundStartUTC = getRoundStartUTC();
+      if(!roundStartUTC) throw 'Set round start first.';
+      // difference in real hours
+      const diff = dt.toUTC().diff(roundStartUTC, ['hours','minutes','seconds']).toObject();
+      const elapsed_real_hours = diff.hours + (diff.minutes||0)/60 + (diff.seconds||0)/3600;
+      // convert to tc hours
+      const elapsed_tc_hours = elapsed_real_hours / REAL_HOURS_PER_TC_HOUR;
+      if (elapsed_tc_hours < 0) return {day: Math.floor(elapsed_tc_hours/24)+1, hour:0, minute:0, negative:true};
+      const day = Math.floor(elapsed_tc_hours / 24) + 1;
+      const hourRaw = elapsed_tc_hours % 24;
+      const hour = Math.floor(hourRaw);
+      const minute = Math.floor((hourRaw - hour) * 60 + 0.0001);
+      return {day, hour, minute, negative:false};
+    }
+
+    // UI handlers
+    function convertTCtoIRL(){
+      try {
+        const day = parseInt(document.getElementById('tcDay').value);
+        const time = document.getElementById('tcTime').value.trim();
+        if (!day || !time) { alert('Fill both Day and HH:MM'); return; }
+        const [hh, mm] = time.split(':').map(Number);
+        if (isNaN(hh) || isNaN(mm)) throw 'Invalid time';
+        const utcDT = tcToUtcDateTime(day, hh, mm);
+        const outZone = outTZ.value || Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const outLocal = utcDT.setZone(outZone);
+        const pretty = outLocal.toFormat("yyyy-LL-dd HH:mm:ss ZZZZ");
+        const el = document.getElementById('tcToIrlResult');
+        el.style.display='block';
+        el.textContent = `→ ${pretty} (${outZone})`;
+      } catch(e){
+        alert('Conversion error: ' + e);
+      }
+    }
+
+    function convertIRLtoTC(){
+      try {
+        const dtStr = document.getElementById('irlDateTime').value;
+        const tz = document.getElementById('irlTZ').value || Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if(!dtStr) { alert('Pick an IRL datetime'); return; }
+        // parse and interpret in tz
+        const parts = dtStr.split('T');
+        const [y,mo,d] = parts[0].split('-').map(Number);
+        const [hh,mm] = parts[1].split(':').map(Number);
+        const dt = DateTime.fromObject({year:y,month:mo,day:d,hour:hh,minute:mm}, {zone: tz});
+        const tc = irlDateTimeToTc(dt);
+        const el = document.getElementById('irlToTcResult');
+        el.style.display='block';
+        if (tc.negative) {
+          el.textContent = `Result: before round start (TC Day ${tc.day} ...)`;
+        } else {
+          el.textContent = `→ TC Day ${tc.day} ${String(tc.hour).padStart(2,'0')}:${String(tc.minute).padStart(2,'0')}`;
+        }
+      } catch(e){
+        alert('Conversion error: ' + e);
+      }
+    }
+
+    // calendar generator: list TC day start & sample time mapping
+    function generateCalendar(){
+      try {
+        const startUTC = getRoundStartUTC();
+        if(!startUTC) { alert('Set round start'); return; }
+        const days = parseInt(document.getElementById('generateDays').value) || 52;
+        const outZone = outTZ.value || Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const container = document.getElementById('calendar');
+        container.innerHTML = '';
+        // for each TC day produce start and end time in chosen zone
+        for(let i=1;i<=days;i++){
+          const tcStart = tcToUtcDateTime(i, 0, 0).setZone(outZone);
+          const tcEnd = tcToUtcDateTime(i, 23, 59).setZone(outZone);
+          const line = document.createElement('div');
+          line.className = 'line';
+          line.innerHTML = `<strong>TC Day ${i}</strong> — starts ${tcStart.toFormat("yyyy-LL-dd HH:mm:ss ZZZZ")}  — sample 12:00 → ${tcToUtcDateTime(i,12,0).setZone(outZone).toFormat("yyyy-LL-dd HH:mm:ss ZZZZ")}`;
+          container.appendChild(line);
+        }
+      } catch(e){
+        alert('Calendar error: ' + e);
+      }
+    }
+
+    function clearCalendar(){
+      document.getElementById('calendar').innerHTML = '';
+    }
+
+    function fillNow(){
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const now = DateTime.local().toISO({suppressSeconds:true, includeOffset:false}).slice(0,16);
+      document.getElementById('irlDateTime').value = now;
+      document.getElementById('irlTZ').value = tz;
+    }
+
+    function fillRoundStart(){
+      const v = roundStartLocal.value;
+      if(!v) { alert('Round start not set'); return; }
+      // compute TC day/time = round start = Day 1 00:00 basically
+      document.getElementById('tcDay').value = 1;
+      document.getElementById('tcTime').value = '00:00';
+    }
+
+    // keyboard: pressing Enter on TC fields triggers conversion
+    document.getElementById('tcTime').addEventListener('keydown', (e)=>{ if(e.key==='Enter') convertTCtoIRL(); });
+
+    // auto-generate some helpful info on load
+    (function initialPopulate(){
+      // set output timezone selects to user's timezone
+      try { const tz = Intl.DateTimeFormat().resolvedOptions().timeZone; outTZ.value = tz; irlTZ.value = tz; } catch(e){}
+    })();
+</script>
+</body>
+</html>
